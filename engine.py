@@ -28,9 +28,27 @@ from timm.utils import NativeScaler, get_state_dict, ModelEma
 from functools import partial
 import torch.nn as nn
 
-# import wandb
+try:
+    import wandb
+except ImportError:
+    wandb = None
+
+from checkpoint_utils import (
+    save_checkpoint_atomic, load_checkpoint_with_fallback,
+    capture_rng_state, restore_rng_state,
+)
 
 sys.setrecursionlimit(40000)
+
+def _resume_dataset_range(checkpoint, current_epoch, n_datasets):
+    """Which dataset index to start `current_epoch` at. `last_completed` is
+    the last index that FULLY finished training+EMA this epoch (-1 if none),
+    tracked separately from the loop variable so a KeyboardInterrupt mid-
+    train_one_epoch never marks an in-progress dataset as done (that would
+    make resume skip it, silently losing that dataset's exposure)."""
+    if checkpoint is None or checkpoint.get('epoch') != current_epoch:
+        return 0
+    return checkpoint['last_completed'] + 1
 
 def omni_engine(args, model_path, output_path, dataset_list, datasets_config, dataset_train_list, dataset_val_list, dataset_test_list):
     device = torch.device(args.device)
@@ -102,7 +120,29 @@ def omni_engine(args, model_path, output_path, dataset_list, datasets_config, da
     save_model_path = os.path.join(model_path, exp)
 
     if args.mode == "train":
-        if args.resume:
+        crash_proof_resume = getattr(args, 'crash_proof_resume', False)
+        atomic_latest = save_model_path + '_atomic_latest.pth'
+        atomic_prev = save_model_path + '_atomic_prev.pth'
+        scaler = torch.amp.GradScaler('cuda', enabled=getattr(args, 'use_amp', False))
+
+        ckpt = None
+        if crash_proof_resume:
+            ckpt = load_checkpoint_with_fallback(atomic_latest, atomic_prev)
+            if ckpt is not None:
+                model.load_state_dict(ckpt['student'])
+                teacher.load_state_dict(ckpt['teacher'])
+                optimizer.load_state_dict(ckpt['optimizer'])
+                lr_scheduler.load_state_dict(ckpt['scheduler'])
+                scaler.load_state_dict(ckpt['scaler'])
+                restore_rng_state(ckpt['rng'])
+                start_epoch = ckpt['epoch']
+                skipped = _resume_dataset_range(ckpt, ckpt['epoch'], len(dataset_list))
+                print(f">>> Crash-proof resume: epoch {start_epoch}, skipping datasets "
+                      f"0..{skipped - 1} already completed this epoch: {dataset_list[:skipped]}")
+            else:
+                print(">>> Crash-proof resume enabled, no checkpoint found — starting fresh")
+        elif args.resume:
+            # Original epoch-only resume path -- unchanged from the real repo.
             resume = save_model_path + '.pth.tar'
             if os.path.isfile(resume):
                 print("=> loading checkpoint '{}'".format(resume))
@@ -111,13 +151,12 @@ def omni_engine(args, model_path, output_path, dataset_list, datasets_config, da
                 init_loss = checkpoint['lossMIN']
                 state_dict = checkpoint['state_dict']
                 teacher_state_dict = checkpoint['teacher']
-                
-                if args.reinit_heads: 
+
+                if args.reinit_heads:
                     for k in model.state_dict().keys():
                         if k.startswith('omni_heads.'):
                             print(f"Removing key {k} from pretrained checkpoint")
                             del state_dict[k]
-
 
                 model.load_state_dict(state_dict, strict=True)
                 teacher.load_state_dict(teacher_state_dict, strict=True)
@@ -128,26 +167,9 @@ def omni_engine(args, model_path, output_path, dataset_list, datasets_config, da
                 start_epoch += 1
             else:
                 print("=> no checkpoint found at '{}'".format(args.resume))
-        
-            # wandb.init(
-            #     # set the wandb project where this run will be logged
-            #     project=exp+'_'+args.exp_name,
-            #     resume=True
-            # )
-        # else:
-        #     # start a new wandb run to track this script
-        #     wandb.init(
-        #         # set the wandb project where this run will be logged
-        #         project=exp+'_'+args.exp_name,
-                
-        #         # track hyperparameters and run metadata
-        #         config={
-        #         "learning_rate": args.lr,
-        #         "architecture": args.model_name,
-        #         "dataset": exp,
-        #         "epochs": args.pretrain_epochs,
-        #         }
-        #     )
+
+        if wandb is not None:
+            wandb.init(project=exp + '_' + args.exp_name, mode="disabled")
 
         with open(log_file, 'a') as log:
                 log.write(str(args))
@@ -155,104 +177,131 @@ def omni_engine(args, model_path, output_path, dataset_list, datasets_config, da
 
         test_results,test_results_teacher = [],[]
         it = start_epoch * len(dataset_list)
-        
-        for epoch in range(start_epoch, args.pretrain_epochs):
-            for i, data_loader in enumerate(data_loader_list_train): 
-                criterion = torch.nn.CrossEntropyLoss() if datasets_config[dataset_list[i]]['task_type'] == "multi-class classification" else torch.nn.BCEWithLogitsLoss()
-                train_one_epoch(model, i, dataset_list[i], data_loader, device, criterion, optimizer, epoch, args.ema_mode, teacher, momentum_schedule, it)
-                it += 1
-            val_loss_list = []
-            for i, dv in enumerate(data_loader_list_val):
-                criterion = torch.nn.CrossEntropyLoss() if datasets_config[dataset_list[i]]['task_type'] == "multi-class classification" else torch.nn.BCEWithLogitsLoss()
-                val_loss = evaluate(model, i, dv, device, criterion, dataset_list[i])
-                val_loss_list.append(val_loss)
-                # wandb.log({"val_loss_{}".format(dataset_list[i]): val_loss})
-            
-            avg_val_loss = np.average(val_loss_list)
-            if args.val_loss_metric == "average":
-                val_loss_metric = avg_val_loss
-            else:
-                val_loss_metric = val_loss_list[dataset_list.index(args.val_loss_metric)]
-            lr_scheduler.step(val_loss_metric)
-            
-            # wandb.log({"avg_val_loss": avg_val_loss})
-            
-            print("Epoch {:04d}: avg_val_loss {:.5f}, saving model to {}".format(epoch, avg_val_loss,save_model_path))
-            save_checkpoint({
-                    'epoch': epoch,
-                    'lossMIN': val_loss_list,
-                    'state_dict': model.state_dict(),
-                    'teacher': teacher.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'scheduler': lr_scheduler.state_dict(),
-                    },  filename=save_model_path)
 
-            with open(log_file, 'a') as log:
-                log.write("Epoch {:04d}: avg_val_loss = {:.5f} \n".format(epoch, avg_val_loss))
-                log.write("     Datasets  : " + str(dataset_list) + "\n")
-                log.write("     Val Losses: " + str(val_loss_list) + "\n")
-                log.close()
-  
+        def checkpoint_now(epoch, last_completed):
+            state = {
+                'epoch': epoch, 'last_completed': last_completed, 'it': it,
+                'student': model.state_dict(), 'teacher': teacher.state_dict(),
+                'optimizer': optimizer.state_dict(), 'scheduler': lr_scheduler.state_dict(),
+                'scaler': scaler.state_dict(), 'rng': capture_rng_state(),
+            }
+            save_checkpoint_atomic(state, atomic_latest, atomic_prev)
 
-            if epoch % args.test_epoch == 0 or epoch+1 == args.pretrain_epochs:
+        try:
+            for epoch in range(start_epoch, args.pretrain_epochs):
+                first_i = _resume_dataset_range(ckpt, epoch, len(dataset_list)) if crash_proof_resume else 0
+                last_completed = first_i - 1  # dedicated tracker: `i` gets rebound by the
+                                               # validation for-loop below, so KeyboardInterrupt
+                                               # during validation must NOT read a stale `i`
+                for i, data_loader in enumerate(data_loader_list_train):
+                    if crash_proof_resume and i < first_i:
+                        it += 1
+                        continue
+                    criterion = torch.nn.CrossEntropyLoss() if datasets_config[dataset_list[i]]['task_type'] == "multi-class classification" else torch.nn.BCEWithLogitsLoss()
+                    train_one_epoch(model, i, dataset_list[i], data_loader, device, criterion, optimizer, epoch, args.ema_mode, teacher, momentum_schedule, it, scaler=scaler)
+                    it += 1
+                    last_completed = i
+                    if crash_proof_resume:
+                        checkpoint_now(epoch, last_completed)
+                val_loss_list = []
+                for i, dv in enumerate(data_loader_list_val):
+                    criterion = torch.nn.CrossEntropyLoss() if datasets_config[dataset_list[i]]['task_type'] == "multi-class classification" else torch.nn.BCEWithLogitsLoss()
+                    val_loss = evaluate(model, i, dv, device, criterion, dataset_list[i], scaler=scaler)
+                    val_loss_list.append(val_loss)
+
+                avg_val_loss = np.average(val_loss_list)
+                if args.val_loss_metric == "average":
+                    val_loss_metric = avg_val_loss
+                else:
+                    val_loss_metric = val_loss_list[dataset_list.index(args.val_loss_metric)]
+                lr_scheduler.step(val_loss_metric)
+
+                print("Epoch {:04d}: avg_val_loss {:.5f}, saving model to {}".format(epoch, avg_val_loss,save_model_path))
                 save_checkpoint({
-                     'epoch': epoch,
-                     'lossMIN': val_loss_list,
-                     'state_dict': model.state_dict(),
-                     'teacher': teacher.state_dict(),
-                     'optimizer': optimizer.state_dict(),
-                     'scheduler': lr_scheduler.state_dict(),
-                     },  filename=save_model_path+str(epoch))
-                with open(output_file, 'a') as writer:
-                    writer.write("Omni-pretraining stage:\n")
-                    writer.write("Epoch {:04d}:\n".format(epoch))
-                    t_res, t_res_teacher = [],[]
-                    for i, dataset in enumerate(dataset_list):
-                        writer.write("{} Validation Loss = {:.5f}:\n".format(dataset, val_loss_list[i]))
-                        diseases = datasets_config[dataset]['diseases']
-                        print(">>{} Disease = {}".format(dataset, diseases))
-                        writer.write("{} Disease = {}\n".format(dataset, diseases))
+                        'epoch': epoch,
+                        'lossMIN': val_loss_list,
+                        'state_dict': model.state_dict(),
+                        'teacher': teacher.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'scheduler': lr_scheduler.state_dict(),
+                        },  filename=save_model_path)
+                if crash_proof_resume:
+                    last_completed = len(dataset_list) - 1  # whole epoch done
+                    checkpoint_now(epoch, last_completed)
 
-                        multiclass =  datasets_config[dataset]['task_type'] == "multi-class classification"
-                        y_test, p_test = test_classification(model, i, data_loader_list_test[i], device, multiclass)
-                        y_test_teacher, p_test_teacher = test_classification(teacher, i, data_loader_list_test[i], device, multiclass)
-                        if multiclass:
-                            acc = accuracy_score(np.argmax(y_test.cpu().numpy(),axis=1),np.argmax(p_test.cpu().numpy(),axis=1))
-                            acc_teacher = accuracy_score(np.argmax(y_test_teacher.cpu().numpy(),axis=1),np.argmax(p_test_teacher.cpu().numpy(),axis=1))
-                            print(">>{}:Student ACCURACY = {}, \nTeacher ACCURACY = {}\n".format(dataset,acc, acc_teacher))
+                with open(log_file, 'a') as log:
+                    log.write("Epoch {:04d}: avg_val_loss = {:.5f} \n".format(epoch, avg_val_loss))
+                    log.write("     Datasets  : " + str(dataset_list) + "\n")
+                    log.write("     Val Losses: " + str(val_loss_list) + "\n")
+                    log.close()
+
+                if epoch % args.test_epoch == 0 or epoch+1 == args.pretrain_epochs:
+                    save_checkpoint({
+                         'epoch': epoch,
+                         'lossMIN': val_loss_list,
+                         'state_dict': model.state_dict(),
+                         'teacher': teacher.state_dict(),
+                         'optimizer': optimizer.state_dict(),
+                         'scheduler': lr_scheduler.state_dict(),
+                         },  filename=save_model_path+str(epoch))
+                    with open(output_file, 'a') as writer:
+                        writer.write("Omni-pretraining stage:\n")
+                        writer.write("Epoch {:04d}:\n".format(epoch))
+                        t_res, t_res_teacher = [],[]
+                        for i, dataset in enumerate(dataset_list):
+                            writer.write("{} Validation Loss = {:.5f}:\n".format(dataset, val_loss_list[i]))
+                            diseases = datasets_config[dataset]['diseases']
+                            print(">>{} Disease = {}".format(dataset, diseases))
+                            writer.write("{} Disease = {}\n".format(dataset, diseases))
+
+                            multiclass =  datasets_config[dataset]['task_type'] == "multi-class classification"
+                            y_test, p_test = test_classification(model, i, data_loader_list_test[i], device, multiclass)
+                            y_test_teacher, p_test_teacher = test_classification(teacher, i, data_loader_list_test[i], device, multiclass)
+                            if multiclass:
+                                acc = accuracy_score(np.argmax(y_test.cpu().numpy(),axis=1),np.argmax(p_test.cpu().numpy(),axis=1))
+                                acc_teacher = accuracy_score(np.argmax(y_test_teacher.cpu().numpy(),axis=1),np.argmax(p_test_teacher.cpu().numpy(),axis=1))
+                                print(">>{}:Student ACCURACY = {}, \nTeacher ACCURACY = {}\n".format(dataset,acc, acc_teacher))
+                                writer.write(
+                                    "\n{}: Student ACCURACY = {}, \nTeacher ACCURACY = {}\n".format(dataset, np.array2string(np.array(acc), precision=4, separator='\t'), np.array2string(np.array(acc_teacher), precision=4, separator='\t')))
+                                t_res.append(acc)
+                                t_res_teacher.append(acc_teacher)
+
+                            if dataset == "CheXpert":
+                                test_diseases_name = datasets_config['CheXpert']['test_diseases_name']
+                                test_diseases = [diseases.index(c) for c in test_diseases_name]
+                                y_test = copy.deepcopy(y_test[:,test_diseases])
+                                p_test = copy.deepcopy(p_test[:, test_diseases])
+                                individual_results = metric_AUROC(y_test, p_test, len(test_diseases))
+                                y_test_teacher = copy.deepcopy(y_test_teacher[:,test_diseases])
+                                p_test_teacher = copy.deepcopy(p_test_teacher[:, test_diseases])
+                                individual_results_teacher = metric_AUROC(y_test_teacher, p_test_teacher, len(test_diseases))
+                            else:
+                                individual_results = metric_AUROC(y_test, p_test, len(diseases))
+                                individual_results_teacher = metric_AUROC(y_test_teacher, p_test_teacher, len(diseases))
+                            print(">>{}:Student AUC = {}, \nTeacher AUC = {}\n".format(dataset, np.array2string(np.array(individual_results), precision=4, separator='\t'),np.array2string(np.array(individual_results_teacher), precision=4, separator='\t')))
                             writer.write(
-                                "\n{}: Student ACCURACY = {}, \nTeacher ACCURACY = {}\n".format(dataset, np.array2string(np.array(acc), precision=4, separator='\t'), np.array2string(np.array(acc_teacher), precision=4, separator='\t')))   
-                            t_res.append(acc)
-                            t_res_teacher.append(acc_teacher)
+                                "\n{}: Student AUC = {}, \nTeacher AUC = {}\n".format(dataset, np.array2string(np.array(individual_results), precision=4, separator='\t'),np.array2string(np.array(individual_results_teacher), precision=4, separator='\t')))
+                            mean_over_all_classes = np.array(individual_results).mean()
+                            mean_over_all_classes_teacher = np.array(individual_results_teacher).mean()
+                            print(">>{}: Student mAUC = {:.4f}, Teacher mAUC = {:.4f}".format(dataset, mean_over_all_classes,mean_over_all_classes_teacher))
+                            writer.write("{}: Student mAUC = {:.4f}, Teacher mAUC = {:.4f}\n".format(dataset, mean_over_all_classes,mean_over_all_classes_teacher))
+                            t_res.append(mean_over_all_classes)
+                            t_res_teacher.append(mean_over_all_classes_teacher)
 
-                        if dataset == "CheXpert":
-                            test_diseases_name = datasets_config['CheXpert']['test_diseases_name']
-                            test_diseases = [diseases.index(c) for c in test_diseases_name]
-                            y_test = copy.deepcopy(y_test[:,test_diseases])
-                            p_test = copy.deepcopy(p_test[:, test_diseases])
-                            individual_results = metric_AUROC(y_test, p_test, len(test_diseases)) 
-                            y_test_teacher = copy.deepcopy(y_test_teacher[:,test_diseases])
-                            p_test_teacher = copy.deepcopy(p_test_teacher[:, test_diseases])
-                            individual_results_teacher = metric_AUROC(y_test_teacher, p_test_teacher, len(test_diseases)) 
-                        else: 
-                            individual_results = metric_AUROC(y_test, p_test, len(diseases))
-                            individual_results_teacher = metric_AUROC(y_test_teacher, p_test_teacher, len(diseases)) 
-                        print(">>{}:Student AUC = {}, \nTeacher AUC = {}\n".format(dataset, np.array2string(np.array(individual_results), precision=4, separator='\t'),np.array2string(np.array(individual_results_teacher), precision=4, separator='\t')))
-                        writer.write(
-                            "\n{}: Student AUC = {}, \nTeacher AUC = {}\n".format(dataset, np.array2string(np.array(individual_results), precision=4, separator='\t'),np.array2string(np.array(individual_results_teacher), precision=4, separator='\t')))
-                        mean_over_all_classes = np.array(individual_results).mean()
-                        mean_over_all_classes_teacher = np.array(individual_results_teacher).mean()
-                        print(">>{}: Student mAUC = {:.4f}, Teacher mAUC = {:.4f}".format(dataset, mean_over_all_classes,mean_over_all_classes_teacher))
-                        writer.write("{}: Student mAUC = {:.4f}, Teacher mAUC = {:.4f}\n".format(dataset, mean_over_all_classes,mean_over_all_classes_teacher))
-                        t_res.append(mean_over_all_classes)
-                        t_res_teacher.append(mean_over_all_classes_teacher)
-                        
-                    writer.close()
+                        writer.close()
 
-                    test_results.append(t_res)
-                    test_results_teacher.append(t_res_teacher)
-        
-                    print("Omni-pretraining stage: \nStudent meanAUC = \n{} \nTeacher meanAUC = \n{}\n".format(test_results, test_results_teacher))
+                        test_results.append(t_res)
+                        test_results_teacher.append(t_res_teacher)
+
+                        print("Omni-pretraining stage: \nStudent meanAUC = \n{} \nTeacher meanAUC = \n{}\n".format(test_results, test_results_teacher))
+        except KeyboardInterrupt:
+            print("\n>>> KeyboardInterrupt caught.")
+            if crash_proof_resume:
+                print(">>> Checkpointing before exit...")
+                checkpoint_now(epoch, last_completed)
+                print(f">>> Saved checkpoint at epoch={epoch}, last_completed={last_completed}. Exiting.")
+            raise
+
         with open(output_file, 'a') as writer:
             writer.write("Omni-pretraining stage: \nStudent meanAUC = \n{} \nTeacher meanAUC = \n{}\n".format(np.array2string(np.array(test_results), precision=4, separator='\t'),np.array2string(np.array(test_results_teacher), precision=4, separator='\t')))
         writer.close()
