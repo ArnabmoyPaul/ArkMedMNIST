@@ -1,0 +1,176 @@
+pathmnist:
+  data_dir: unused-medmnist-downloads-by-key
+  train_list: train
+  val_list: val
+  test_list: test
+  diseases:
+  - adipose
+  - background
+  - debris
+  - lymphocytes
+  - mucus
+  - smooth muscle
+  - normal colon mucosa
+  - cancer-associated stroma
+  - colorectal adenocarcinoma epithelium
+  task_type: multi-class classification
+bloodmnist:
+  data_dir: unused-medmnist-downloads-by-key
+  train_list: train
+  val_list: val
+  test_list: test
+  diseases:
+  - basophil
+  - eosinophil
+  - erythroblast
+  - immature granulocytes(myelocytes, metamyelocytes and promyelocytes)
+  - lymphocyte
+  - monocyte
+  - neutrophil
+  - platelet
+  task_type: multi-class classification
+dermamnist:
+  data_dir: unused-medmnist-downloads-by-key
+  train_list: train
+  val_list: val
+  test_list: test
+  diseases:
+  - actinic keratoses and intraepithelial carcinoma
+  - basal cell carcinoma
+  - benign keratosis-like lesions
+  - dermatofibroma
+  - melanoma
+  - melanocytic nevi
+  - vascular lesions
+  task_type: multi-class classification
+octmnist:
+  data_dir: unused-medmnist-downloads-by-key
+  train_list: train
+  val_list: val
+  test_list: test
+  diseases:
+  - choroidal neovascularization
+  - diabetic macular edema
+  - drusen
+  - normal
+  task_type: multi-class classification
+pneumoniamnist:
+  data_dir: unused-medmnist-downloads-by-key
+  train_list: train
+  val_list: val
+  test_list: test
+  diseases:
+  - normal
+  - pneumonia
+  task_type: multi-class classification
+retinamnist:
+  data_dir: unused-medmnist-downloads-by-key
+  train_list: train
+  val_list: val
+  test_list: test
+  diseases:
+  - '0'
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  task_type: multi-class classification
+breastmnist:
+  data_dir: unused-medmnist-downloads-by-key
+  train_list: train
+  val_list: val
+  test_list: test
+  diseases:
+  - malignant
+  - normal, benign
+  task_type: multi-class classification
+tissuemnist:
+  data_dir: unused-medmnist-downloads-by-key
+  train_list: train
+  val_list: val
+  test_list: test
+  diseases:
+  - Collecting Duct, Connecting Tubule
+  - Distal Convoluted Tubule
+  - Glomerular endothelial cells
+  - Interstitial endothelial cells
+  - Leukocytes
+  - Podocytes
+  - Proximal Tubule Segments
+  - Thick Ascending Limb
+  task_type: multi-class classification
+organamnist:
+  data_dir: unused-medmnist-downloads-by-key
+  train_list: train
+  val_list: val
+  test_list: test
+  diseases:
+  - bladder
+  - femur-left
+  - femur-right
+  - heart
+  - kidney-left
+  - kidney-right
+  - liver
+  - lung-left
+  - lung-right
+  - pancreas
+  - spleen
+  task_type: multi-class classification
+organcmnist:
+  data_dir: unused-medmnist-downloads-by-key
+  train_list: train
+  val_list: val
+  test_list: test
+  diseases:
+  - bladder
+  - femur-left
+  - femur-right
+  - heart
+  - kidney-left
+  - kidney-right
+  - liver
+  - lung-left
+  - lung-right
+  - pancreas
+  - spleen
+  task_type: multi-class classification
+organsmnist:
+  data_dir: unused-medmnist-downloads-by-key
+  train_list: train
+  val_list: val
+  test_list: test
+  diseases:
+  - bladder
+  - femur-left
+  - femur-right
+  - heart
+  - kidney-left
+  - kidney-right
+  - liver
+  - lung-left
+  - lung-right
+  - pancreas
+  - spleen
+  task_type: multi-class classification
+chestmnist:
+  data_dir: unused-medmnist-downloads-by-key
+  train_list: train
+  val_list: val
+  test_list: test
+  diseases:
+  - atelectasis
+  - cardiomegaly
+  - effusion
+  - infiltration
+  - mass
+  - nodule
+  - pneumonia
+  - pneumothorax
+  - consolidation
+  - edema
+  - emphysema
+  - fibrosis
+  - pleural
+  - hernia
+  task_type: multi-label classification
