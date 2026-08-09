@@ -17,6 +17,7 @@ from trainer import train_one_epoch
 # This test calls train_one_epoch directly, so recreate/clean that dir here
 # rather than touching trainer.py.
 _MODELS_DIR = "Models"
+_SAVED_IMAGES = ["Models/student0.jpeg", "Models/teacher0.jpeg"]  # Debug-save output filenames
 
 
 class _TinyArkLike(nn.Module):
@@ -56,13 +57,20 @@ def test_train_one_epoch_runs_with_amp_disabled_on_cpu():
     before = model.enc.weight.clone()
 
     scaler = torch.amp.GradScaler('cuda', enabled=False)  # CPU test: AMP path present but inert
+    models_dir_existed = os.path.isdir(_MODELS_DIR)
     os.makedirs(_MODELS_DIR, exist_ok=True)
     try:
         train_one_epoch(model, 0, "tinyset", loader, torch.device('cpu'), nn.CrossEntropyLoss(),
                          optimizer, epoch=0, ema_mode="epoch", teacher=teacher,
                          momentum_schedule=momentum_schedule, it=0, scaler=scaler)
     finally:
-        shutil.rmtree(_MODELS_DIR, ignore_errors=True)
+        # Only remove files this test created, not the whole directory
+        for img_path in _SAVED_IMAGES:
+            if os.path.exists(img_path):
+                os.remove(img_path)
+        # Remove directory only if this test created it
+        if not models_dir_existed and os.path.isdir(_MODELS_DIR):
+            shutil.rmtree(_MODELS_DIR, ignore_errors=True)
 
     assert not torch.allclose(before, model.enc.weight), "weights should have updated"
 
@@ -82,13 +90,20 @@ def test_backward_compatible_call_without_scaler_still_works():
     loader = DataLoader(TensorDataset(x1, x2, y), batch_size=4)
     optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
 
+    models_dir_existed = os.path.isdir(_MODELS_DIR)
     os.makedirs(_MODELS_DIR, exist_ok=True)
     try:
         train_one_epoch(model, 0, "tinyset", loader, torch.device('cpu'), nn.CrossEntropyLoss(),
                          optimizer, epoch=0, ema_mode="epoch", teacher=teacher,
                          momentum_schedule=[0.9], it=0)  # no scaler kwarg at all
     finally:
-        shutil.rmtree(_MODELS_DIR, ignore_errors=True)
+        # Only remove files this test created, not the whole directory
+        for img_path in _SAVED_IMAGES:
+            if os.path.exists(img_path):
+                os.remove(img_path)
+        # Remove directory only if this test created it
+        if not models_dir_existed and os.path.isdir(_MODELS_DIR):
+            shutil.rmtree(_MODELS_DIR, ignore_errors=True)
 
 
 if __name__ == "__main__":
