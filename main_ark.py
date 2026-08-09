@@ -7,6 +7,7 @@ from optparse import OptionParser
 from shutil import copyfile
 from tqdm import tqdm
 
+import _compat_albumentations  # noqa: F401 -- must precede dataloader import, see that module's docstring
 from utils import vararg_callback_bool, vararg_callback_int, get_config
 from dataloader import  *
 
@@ -16,7 +17,7 @@ from engine import omni_engine
 sys.setrecursionlimit(40000)
 
 
-def get_args_parser():
+def get_args_parser(argv=None):
     parser = OptionParser()
 
     parser.add_option("--GPU", dest="GPU", help="the index of gpu is used", default=None, action="callback",
@@ -103,7 +104,7 @@ def get_args_parser():
                       default=0, type="int")
 
 
-    (options, args) = parser.parse_args()
+    (options, args) = parser.parse_args(argv)
 
     return options
 
