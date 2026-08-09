@@ -1,8 +1,28 @@
-"""Compatibility shim for albumentations.
+"""Compatibility shim for albumentations >= 1.0.0.
 
-Provides missing/renamed classes for albumentations>=1.0.0.
-The Ark_Plus code was written for older albumentations API; this shim
-maintains compatibility with newer versions.
+CRITICAL: This module MUST be imported before any `from dataloader import ...`
+or `import dataloader` statements anywhere in the codebase. The import order
+matters because this module patches the albumentations namespace as a side effect.
+
+Patches these albumentations names that were removed in v1.0.0+:
+  - RandomBrightness → wrapper around RandomBrightnessContrast
+  - RandomContrast → wrapper around RandomBrightnessContrast
+  - JpegCompression → alias to ImageCompression
+  - IAAAdditiveGaussianNoise → alias to GaussNoise
+
+The Ark_Plus code was written for older albumentations API (v0.5.x); this
+shim maintains compatibility with albumentations==1.4.24 by providing the
+missing/renamed classes that dataloader.py imports at module level.
+
+Without this shim imported FIRST, any code that imports dataloader.py will
+fail with ImportError on the missing classes.
+
+Example (correct):
+    import _compat_albumentations  # Import shim first
+    from dataloader import ChestXray14
+
+Example (wrong):
+    from dataloader import ChestXray14  # Will fail with ImportError
 """
 import albumentations as A
 
