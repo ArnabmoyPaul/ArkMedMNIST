@@ -285,7 +285,11 @@ def load_finetune_backbone(model, checkpoint_path, key='teacher'):
     (strict=False only tolerates missing/extra keys, not shape mismatches, so
     a genuine mismatch would still raise -- the head must be filtered out
     before load_state_dict ever sees it)."""
-    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    # weights_only=False: PyTorch 2.6+ defaults torch.load to weights_only=True,
+    # which rejects our own checkpoints (omni_engine's 'lossMIN' entry is a list
+    # of numpy float64s from evaluate(), not on the default allowlist). Safe
+    # here since these checkpoints are self-generated, not from an untrusted source.
+    checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
     state_dict = checkpoint[key]
     state_dict = {k: v for k, v in state_dict.items() if not k.startswith('omni_heads.')}
     msg = model.load_state_dict(state_dict, strict=False)

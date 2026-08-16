@@ -110,7 +110,7 @@ def main(argv=None):
             print(f"Early stopping at epoch {epoch} (no val improvement in {args.patience} epochs)")
             break
 
-    best_ckpt = torch.load(best_path + ".pth.tar", map_location=device)
+    best_ckpt = torch.load(best_path + ".pth.tar", map_location=device, weights_only=False)  # self-generated checkpoint, trusted
     model.load_state_dict(best_ckpt["state_dict"])
     print(f"Loaded best checkpoint from epoch {best_ckpt['epoch']} (val_loss={best_ckpt['val_loss']:.4f})")
 
