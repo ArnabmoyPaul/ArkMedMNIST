@@ -70,6 +70,48 @@ def train_one_epoch(model, use_head_n, dataset, data_loader_train, device, crite
         wandb.log({"train_loss_mse_{}".format(dataset): losses_mse.avg})
 
 
+def train_downstream_epoch(model, use_head_n, dataset, data_loader_train, device, criterion, optimizer, epoch, scaler=None):
+    """Plain supervised fine-tuning step -- no teacher, no EMA, no distillation
+    term. train_one_epoch above is hard-wired to the omni self-distillation
+    loss (teacher forward pass + momentum-scheduled MSE consistency term);
+    none of that applies to downstream fine-tuning on a single labeled task."""
+    batch_time = MetricLogger('Time', ':6.3f')
+    losses = MetricLogger('Loss_'+dataset, ':.4e')
+    progress = ProgressLogger(
+        len(data_loader_train),
+        [batch_time, losses],
+        prefix="Epoch: [{}]".format(epoch))
+
+    model.train()
+    amp_enabled = scaler is not None and scaler.is_enabled()
+    end = time.time()
+    for i, (samples, _, targets) in enumerate(data_loader_train):
+        samples, targets = samples.float().to(device), targets.float().to(device)
+
+        with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp_enabled):
+            _, pred = model(samples, use_head_n)
+            loss = criterion(pred, targets)
+
+        optimizer.zero_grad()
+        if amp_enabled:
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
+
+        losses.update(loss.item(), samples.size(0))
+        batch_time.update(time.time() - end)
+        end = time.time()
+
+        if i % 50 == 0:
+            progress.display(i)
+
+    print(f"  {dataset}: loss={losses.avg:.4f}")
+    return losses.avg
+
+
 def ema_update_teacher(model, teacher, momentum_schedule, it):
     with torch.no_grad():
         m = momentum_schedule[it]  # momentum parameter
