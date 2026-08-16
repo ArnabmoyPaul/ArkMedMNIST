@@ -59,9 +59,18 @@ and directly reusable for a 3D-only run (no joint-run baggage):
   resume / crash-proof-resume paths reference `model`/`teacher` unconditionally in
   several places, and this GPU's crash history makes that code worth not touching
   unless the waste actually causes an OOM.
-- `finetune_downstream.py` (2D, already working end-to-end) is the template for the
-  3D fine-tuning driver — `train_downstream_epoch`, `load_finetune_backbone`,
-  early-stop logic are all dataset/model-agnostic already.
+- **Correction found while re-checking before writing the plan:** the 2D downstream
+  fine-tuning driver was only ever *planned*
+  (`docs/superpowers/plans/2026-08-12-downstream-finetune.md`, committed `7a92db1`)
+  — `finetune_downstream.py` was never created, and `trainer.train_downstream_epoch`
+  / `models.load_finetune_backbone` don't exist in either the committed history or
+  the current uncommitted diff. That plan's Task 1/Task 2 code (a plain supervised
+  train-epoch function and a heads-stripping checkpoint loader) is dataset-agnostic
+  by design — nothing in it is 2D-specific — so it gets implemented directly here,
+  driving `ArkR3D`/3D data instead of `ArkSwinTransformer`/2D data, rather than
+  porting from a 2D file that doesn't exist. The 2D-specific parts of that old plan
+  (`finetune_downstream.py` itself, argparse choices over `MEDMNIST_2D_KEYS`) are not
+  built — out of scope here, since the target benchmarks are all 3D.
 
 Also found: the `ark_medmnist` conda env has had every package uninstalled
 (`conda-meta/history` shows a full removal, `conda-meta` itself is empty) despite
@@ -127,9 +136,17 @@ checkpoints (same layout `omni_engine` already produces), periodic per-dataset
 test-AUC reports in `train.log`/`epoch_metrics.jsonl` (already built by the
 uncommitted `engine.py` changes).
 
+### `trainer.train_downstream_epoch` / `models.load_finetune_backbone`
+
+Implemented per the already-reviewed design in
+`docs/superpowers/plans/2026-08-12-downstream-finetune.md` Tasks 1-2, verbatim
+(both are dataset/model-agnostic: plain supervised train-epoch step, and a
+checkpoint loader that strips `omni_heads.*` keys before `load_state_dict`).
+
 ### `finetune_downstream_3d.py`
 
-Clone of `finetune_downstream.py`, adapted for 3D:
+New driver, following the same design as that plan's (unbuilt) `finetune_downstream.py`
+Task 3, adapted for 3D:
 - `--dataset` choices = the 6 `DATASET_MAP_3D` keys instead of `MEDMNIST_2D_KEYS`.
 - Data: `MedMNIST3DWrapper(dataset, split=...)` directly (no `build_transform_classification`
   — 3D augmentation lives in `Augment3D`, already wired into the wrapper).
