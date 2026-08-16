@@ -1,7 +1,8 @@
 """test_models_medmnist.py — self-check for the MedMNIST-driven additions to
 models.py. Run: python test_models_medmnist.py"""
+import os
 import torch
-from models import ArkSwinTransformer, build_omni_model, load_imagenet_backbone
+from models import ArkSwinTransformer, build_omni_model, load_imagenet_backbone, load_finetune_backbone
 from optparse import Values
 
 
@@ -67,10 +68,49 @@ def test_load_imagenet_backbone_at_112px_survives_window_shrink():
     load_imagenet_backbone(model, "swin_tiny_patch4_window7_224")  # must not raise
 
 
+def test_load_finetune_backbone_transfers_encoder_not_heads():
+    pretrained = ArkSwinTransformer([9, 2, 5], projector_features=None, use_mlp=False,
+                                     patch_size=4, window_size=7, embed_dim=96,
+                                     depths=(2, 2, 6, 2), num_heads=(3, 6, 12, 24))
+    ckpt_path = "test_fake_checkpoint_heads.pth.tar"
+    torch.save({"teacher": pretrained.state_dict()}, ckpt_path)
+
+    try:
+        target = ArkSwinTransformer([2], projector_features=None, use_mlp=False,
+                                     patch_size=4, window_size=7, embed_dim=96,
+                                     depths=(2, 2, 6, 2), num_heads=(3, 6, 12, 24))
+        head_before = target.omni_heads[0].weight.clone()
+        load_finetune_backbone(target, ckpt_path, key="teacher")
+
+        assert torch.allclose(target.omni_heads[0].weight, head_before), \
+            "omni_heads must stay untouched -- loading them risks splicing in the wrong dataset's head"
+        assert torch.allclose(target.patch_embed.proj.weight, pretrained.patch_embed.proj.weight), \
+            "encoder weights must transfer from the checkpoint"
+    finally:
+        os.remove(ckpt_path)
+
+
+def test_load_finetune_backbone_survives_class_count_matching_no_head():
+    pretrained = ArkSwinTransformer([9, 2, 5], projector_features=None, use_mlp=False,
+                                     patch_size=4, window_size=7, embed_dim=96,
+                                     depths=(2, 2, 6, 2), num_heads=(3, 6, 12, 24))
+    ckpt_path = "test_fake_checkpoint_noheadmatch.pth.tar"
+    torch.save({"teacher": pretrained.state_dict()}, ckpt_path)
+    try:
+        target = ArkSwinTransformer([7], projector_features=None, use_mlp=False,
+                                     patch_size=4, window_size=7, embed_dim=96,
+                                     depths=(2, 2, 6, 2), num_heads=(3, 6, 12, 24))
+        load_finetune_backbone(target, ckpt_path, key="teacher")  # must not raise
+    finally:
+        os.remove(ckpt_path)
+
+
 if __name__ == "__main__":
     test_forward_features_pooling_bridges_timm_spatial_output()
     test_generate_embeddings_also_pools()
     test_build_omni_model_swin_tiny_at_custom_img_size()
     test_load_imagenet_backbone_transfers_encoder_not_heads()
     test_load_imagenet_backbone_at_112px_survives_window_shrink()
+    test_load_finetune_backbone_transfers_encoder_not_heads()
+    test_load_finetune_backbone_survives_class_count_matching_no_head()
     print("test_models_medmnist.py: all checks passed")

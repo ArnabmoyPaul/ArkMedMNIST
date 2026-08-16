@@ -274,3 +274,20 @@ def load_imagenet_backbone(model, timm_model_name):
     msg = model.load_state_dict(state_dict, strict=False)
     print('Loaded ImageNet backbone ({}) with msg: {}'.format(timm_model_name, msg))
     return model
+
+def load_finetune_backbone(model, checkpoint_path, key='teacher'):
+    """Loads a single-task-head model's encoder from a multi-head omni-pretraining
+    checkpoint. omni_heads keys are always dropped before loading: the
+    checkpoint's omni_heads.0 is whichever dataset was first in the ORIGINAL
+    pretraining dataset_list, not this model's target dataset -- loading it
+    unfiltered would crash on a shape mismatch, or worse, silently splice in
+    the wrong dataset's head whenever class counts happen to match
+    (strict=False only tolerates missing/extra keys, not shape mismatches, so
+    a genuine mismatch would still raise -- the head must be filtered out
+    before load_state_dict ever sees it)."""
+    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    state_dict = checkpoint[key]
+    state_dict = {k: v for k, v in state_dict.items() if not k.startswith('omni_heads.')}
+    msg = model.load_state_dict(state_dict, strict=False)
+    print('Loaded {} backbone from {} with msg: {}'.format(key, checkpoint_path, msg))
+    return msg
