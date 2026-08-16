@@ -55,9 +55,22 @@ def test_load_imagenet_backbone_transfers_encoder_not_heads():
         "load_imagenet_backbone must not touch omni_heads (strict=False, heads have no matching key)"
 
 
+def test_load_imagenet_backbone_at_112px_survives_window_shrink():
+    # At img_size=112 the last stage's spatial resolution (3x3) is below
+    # window_size=7, so timm shrinks that stage's window and its
+    # relative_position_bias_table no longer matches the 224px checkpoint's
+    # shape -- strict=False alone doesn't skip shape mismatches, only
+    # missing/extra keys, and used to raise RuntimeError here.
+    model = ArkSwinTransformer([9], projector_features=None, use_mlp=False,
+                                img_size=112, patch_size=4, window_size=7, embed_dim=96,
+                                depths=(2, 2, 6, 2), num_heads=(3, 6, 12, 24))
+    load_imagenet_backbone(model, "swin_tiny_patch4_window7_224")  # must not raise
+
+
 if __name__ == "__main__":
     test_forward_features_pooling_bridges_timm_spatial_output()
     test_generate_embeddings_also_pools()
     test_build_omni_model_swin_tiny_at_custom_img_size()
     test_load_imagenet_backbone_transfers_encoder_not_heads()
+    test_load_imagenet_backbone_at_112px_survives_window_shrink()
     print("test_models_medmnist.py: all checks passed")
