@@ -3,7 +3,14 @@ import torch
 import random
 import copy
 import csv
+from functools import partial
 from PIL import Image
+
+# Must run before the `from albumentations import (...)` below -- and must live
+# here, not just in callers (main_ark.py/verify_env.py), because Windows
+# multiprocessing `spawn` re-imports this module fresh in every DataLoader
+# worker process, where none of this file's callers have run yet.
+import _compat_albumentations  # noqa: F401
 
 from torch.utils.data import Dataset
 import torchvision.transforms as transforms
@@ -20,6 +27,14 @@ from albumentations import (
     IAAAdditiveGaussianNoise,GaussNoise,OpticalDistortion,RandomSizedCrop, RandomResizedCrop, Normalize
 )
 from albumentations.pytorch import ToTensorV2
+
+def _tencrop_to_tensor(crops):
+    return torch.stack([transforms.ToTensor()(crop) for crop in crops])
+
+
+def _tencrop_normalize(crops, normalize):
+    return torch.stack([normalize(crop) for crop in crops])
+
 
 def build_transform_classification(normalize, crop_size=224, resize=256, mode="train", test_augment=True):
     transformations_list = []
@@ -50,10 +65,9 @@ def build_transform_classification(normalize, crop_size=224, resize=256, mode="t
       if test_augment:
         transformations_list.append(transforms.Resize((resize, resize)))
         transformations_list.append(transforms.TenCrop(crop_size))
-        transformations_list.append(
-          transforms.Lambda(lambda crops: torch.stack([transforms.ToTensor()(crop) for crop in crops])))
+        transformations_list.append(transforms.Lambda(_tencrop_to_tensor))
         if normalize is not None:
-          transformations_list.append(transforms.Lambda(lambda crops: torch.stack([normalize(crop) for crop in crops])))
+          transformations_list.append(transforms.Lambda(partial(_tencrop_normalize, normalize=normalize)))
       else:
         transformations_list.append(transforms.Resize((resize, resize)))
         transformations_list.append(transforms.CenterCrop(crop_size))

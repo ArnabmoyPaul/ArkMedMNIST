@@ -31,6 +31,17 @@ it must be imported before any `dataloader` import anywhere in the codebase (`ve
 and `main_ark.py` both do this first). A compatibility shim for a library version gap, not
 a change to Ark+'s augmentation design.
 
+**Windows `multiprocessing` spawn can't pickle local closures.** `DataLoader(num_workers>0)`
+on Windows re-imports worker arguments via `spawn`, which requires them to be picklable --
+locally-defined classes and lambdas aren't. Hit twice: `medmnist_dataloader.py`'s per-dataset
+dataset classes (fixed with `functools.partial(MedMNIST2DDataset, key=key)` instead of a
+per-dataset subclass) and `dataloader.py`'s `build_transform_classification` TenCrop
+test-augment branch (two `transforms.Lambda(lambda ...)` closures, only reached when
+`mode="test"` and `test_augment=True` -- crashed the every-epoch AUROC test pass, not
+training or validation). Fixed the same way: module-level `_tencrop_to_tensor`/
+`_tencrop_normalize` functions plus `functools.partial` to bind `normalize`. No change to
+what the transforms compute, purely a picklability fix for this platform.
+
 ## Deliberate, flagged deviations
 
 **Backbone size:** Swin-Base (paper's smallest documented config, ~88M params) ->

@@ -11,6 +11,8 @@ don't rewrite the loop).
 (dataset key, split), it has no annotation file. `images_path` is unused
 (kept only for signature parity with dict_dataloarder's other entries).
 """
+from functools import partial
+
 import numpy as np
 import torch
 from PIL import Image
@@ -113,17 +115,10 @@ class MedMNIST2DDataset(Dataset):
         return self.augment(img), self.augment(img), label
 
 
-def _make_medmnist_dataset_class(key):
-    """dict_dataloarder needs one no-extra-arg class per dataset -- main_ark.py
-    calls dict_dataloarder[dataset](images_path=..., file_path=..., ...) with
-    no way to pass `key` through, so bind it via a tiny subclass per dataset."""
-    class _Bound(MedMNIST2DDataset):
-        def __init__(self, images_path, file_path, crop_size=224, resize=256,
-                     augment=None, num_class=None, annotation_percent=100):
-            super().__init__(images_path, file_path, crop_size, resize, augment,
-                              num_class, annotation_percent, key=key)
-    _Bound.__name__ = f"MedMNIST_{key}"
-    return _Bound
-
-
-MEDMNIST_DATALOADER_DICT = {key: _make_medmnist_dataset_class(key) for key in MEDMNIST_2D_KEYS}
+# dict_dataloarder needs one no-extra-arg constructor per dataset -- main_ark.py calls
+# dict_dataloarder[dataset](images_path=..., file_path=..., ...) with no way to pass
+# `key` through, so bind it via functools.partial rather than a per-dataset subclass:
+# a locally-defined class can't be pickled, which breaks DataLoader(num_workers>0) on
+# Windows (spawn); partial(MedMNIST2DDataset, key=key) is picklable since the wrapped
+# class is a real top-level name.
+MEDMNIST_DATALOADER_DICT = {key: partial(MedMNIST2DDataset, key=key) for key in MEDMNIST_2D_KEYS}
