@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from trainer import train_one_epoch
+from trainer import train_one_epoch, test_classification
 
 # ponytail: train_one_epoch's untouched debug-save (i % 50 == 0) writes to a
 # hardcoded "Models/" dir that production only has because engine.py's
@@ -106,7 +106,28 @@ def test_backward_compatible_call_without_scaler_still_works():
             shutil.rmtree(_MODELS_DIR, ignore_errors=True)
 
 
+def test_classification_is_3d_flag_bypasses_tta_shape_inference():
+    # A 3D volume batch (bs, c, d, h, w) is 5D -- same rank as the 10-crop TTA
+    # case (bs, n_crops, c, h, w) that test_classification's non-3D branch
+    # shape-sniffs for. Without is_3d=True this would get misread as
+    # (bs, n_crops=c, c=d, h, w) and reshaped wrong. Requires CUDA (targets are
+    # hardcoded .cuda() in test_classification, pre-existing/out of scope here).
+    if not torch.cuda.is_available():
+        print("  (skipping test_classification_is_3d_flag_bypasses_tta_shape_inference: no CUDA)")
+        return
+    torch.manual_seed(0)
+    model = _TinyArkLike(in_dim=2*4*4*4, num_classes=3).cuda()
+    x = torch.randn(6, 2, 4, 4, 4)  # (bs, c=2, d=4, h=4, w=4) -- 5D, not TTA
+    y = torch.eye(3)[torch.randint(0, 3, (6,))]
+    loader = DataLoader(TensorDataset(x, x, y), batch_size=3)
+
+    y_test, p_test = test_classification(model, 0, loader, torch.device('cuda'), multiclass=True, is_3d=True)
+    assert y_test.shape == (6, 3)
+    assert p_test.shape == (6, 3), f"is_3d=True must keep bs=6 (not misread as n_crops), got {p_test.shape}"
+
+
 if __name__ == "__main__":
     test_train_one_epoch_runs_with_amp_disabled_on_cpu()
     test_backward_compatible_call_without_scaler_still_works()
+    test_classification_is_3d_flag_bypasses_tta_shape_inference()
     print("test_trainer_amp.py: all checks passed")
