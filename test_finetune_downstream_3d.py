@@ -31,9 +31,12 @@ def test_compare_fail_when_short_by_more_than_one_point():
     assert _compare_to_benchmark(0.90, 0.994) == "FAIL"
 
 
-def test_compare_no_target_for_synapse():
+def test_compare_no_target_generic():
     assert _compare_to_benchmark(0.80, None) == "NO_TARGET"
-    assert BENCHMARKS_3D["SynapseMNIST3D"] is None
+
+
+def test_synapse_target_is_0_851():
+    assert BENCHMARKS_3D["SynapseMNIST3D"] == 0.851
 
 
 def test_parse_args_requires_checkpoint():
@@ -61,7 +64,8 @@ if __name__ == "__main__":
     test_compare_pass_when_auc_meets_or_beats_target()
     test_compare_within_1pct_when_short_by_at_most_one_point()
     test_compare_fail_when_short_by_more_than_one_point()
-    test_compare_no_target_for_synapse()
+    test_compare_no_target_generic()
+    test_synapse_target_is_0_851()
     test_parse_args_requires_checkpoint()
     test_parse_args_defaults()
     print("test_finetune_downstream_3d.py: all checks passed")

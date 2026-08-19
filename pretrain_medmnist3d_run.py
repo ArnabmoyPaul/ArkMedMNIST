@@ -15,7 +15,10 @@ def main():
     args.batch_size = 32                       # 2D batch size, unused
     args.batch_size_3d = 16                    # validated on this GPU by the 18-combined run
     args.workers = 4
-    args.pretrain_epochs = 20                  # matches the 2D-12 run's precedent
+    args.pretrain_epochs = 40                  # extended from 30: Organ/Synapse still WITHIN_1PCT
+                                                # short of benchmark after the 20-29 extension;
+                                                # crash_proof_resume picks up at epoch 29 and trains
+                                                # 30-39 rather than restarting the unified backbone
     args.test_epoch = 5                        # full test-set AUC pass every 5 epochs -- this
                                                 # pass is 2-3x slower than training (TTA on
                                                 # student+teacher over all 6 test sets)

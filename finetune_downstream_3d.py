@@ -19,7 +19,7 @@ BENCHMARKS_3D = {
     "AdrenalMNIST3D": 0.828,
     "FractureMNIST3D": 0.725,
     "NoduleMNIST3D": 0.875,
-    "SynapseMNIST3D": None,  # no target given -- report only
+    "SynapseMNIST3D": 0.851,
 }
 
 
