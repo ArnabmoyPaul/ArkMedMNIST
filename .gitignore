@@ -1,6 +1,24 @@
+# Ignore everything by default; the allowlist below keeps only source code.
+*
+!*/
+
+!*.py
+!*.ipynb
+!*.md
+!*.yaml
+!*.yml
+
+# Directories whose contents (.py/.md/etc) would otherwise match the allowlist
+# above but are artifacts/session state, not source code.
 __pycache__/
 .ipynb_checkpoints/
-outputs/
-*.pth
-*.pt
 .claude/
+.superpowers/
+Models/
+outputs/
+
+# Test files and ad-hoc driver scripts/logs: not portfolio-relevant, so re-ignore
+# even though .py would otherwise let them through the allowlist above.
+test_*.py
+*.log
+*.bat
